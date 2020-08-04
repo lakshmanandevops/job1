@@ -1,65 +1,88 @@
-node{
-    stage('git checkout'){
-        git credentialsId: 'git-creds', url: 'https://github.com/shubhamkushwah123/devops-bootcamp2.git'
-    }
+node {
+
+  def docker = tool name: 'dockerruntime', type: 'dockerTool'
+  def docCMD = "${docker}/bin/docker"
+  def mvnHome = tool name: 'Maven', type: 'maven'
+  def mvnCMD = "${mvnHome}/bin/mvn"
+  def imageName = "laxans16/job1"
+
+  stage('GIT Checkout') 
+  {
+        git 'https://github.com/lakshmanandevops/job1.git'
     
-    stage('code build & test'){
-       // sh 'mvn clean package'
-       
-       def mavenHome = tool name: 'maven-3' , type: 'maven'
-       def mavenCMD = "${mavenHome}/bin/mvn"
-       sh "${mavenCMD} clean package"
+ }
+ 
+    stage('Compile/Test/Sonar Analysus /Package') {
+        
+        withSonarQubeEnv('SonarServ') 
+          {
+        sh "${mvnCMD} clean package sonar:sonar"
+          }
+         
     }
-    
-    stage('docker build'){
-        sh 'docker build -t shubhamkushwah123/cicd-demo:3.0 .'
+
+    stage('Docker Build') {
+        
+        sh "sudo ${docCMD} build -t ${imageName} ."
     }
-    
-    stage('docker push'){
-     //  withCredentials([string(credentialsId: 'dockerPwd', variable: 'dockerHubPwd')]) {
-     //   sh "docker login -u shubhamkushwah123 -p ${dockerHubPwd}"
-     //   }
-     //   sh 'docker push shubhamkushwah123/cicd-demo:3.0'
-    }
-    
-    stage('configure ec2 with ansible'){
-    //    ansiblePlaybook becomeUser: 'ec2-user', credentialsId: 'aws-dev-server', installation: 'ansible', playbook: 'my-aws-playbook.yml', sudoUser: 'ec2-user'
-    }
-    
-    def ipAddress = "NULL"
-    stage('identify IP address'){
-        def command = 'aws ec2 describe-instances --query "Reservations[*].Instances[*].PublicIpAddress[]"'
-        def output = sh script: "${command}" , returnStdout:true
-        def myIp = output.split('"')
-        ipAddress=myIp[1]
-        println ipAddress
-    }
-    
-    stage('Install Docker on AWS'){
-        def dockerCMD = 'sudo yum install docker -y'
-        sshagent(['aws-dev-server']) {
-        sh "ssh -o StrictHostKeyChecking=no ec2-user@${ipAddress} ${dockerCMD}"
+
+    stage('Docker Push') {
+        withCredentials([string(credentialsId: 'dockerPwd', variable: 'dockerHubPwd')]) {
+            sh "sudo ${docCMD} login -u laxans16 -p ${dockerHubPwd}"
         }
+        sh "sudo ${docCMD} push ${imageName}"
+        sh "sudo ${docCMD} system prune -af"
     }
+
     
-    stage('Run Docker Daemon'){
-        def dockerCMD = 'sudo service docker start'
-        sshagent(['aws-dev-server']) {
-        sh "ssh -o StrictHostKeyChecking=no ec2-user@${ipAddress} ${dockerCMD}"
-        }
+
+  stage('configure ec2 with ansible') {
+    ansiblePlaybook becomeUser: 'ec2-user',
+    credentialsId: 'aswcred',
+    installation: 'Ansible',
+    playbook: 'task.yml',
+    sudoUser: 'ec2-user'
+  }
+
+  def ipAddress = "NULL"
+  stage('identify IP address') {
+    def command = 'sudo aws ec2 describe-instances --query "Reservations[*].Instances[*].PublicIpAddress[]"'
+    def output = sh script: "${command}",
+    returnStdout: true
+    def myIp = output.split('"')
+    ipAddress = myIp[3]
+    println ipAddress
+
+  }
+
+  stage('Install Docker on AWS') {
+    def dockerCMD = 'sudo yum install docker -y'
+    sshagent(['aws-server']) {
+      sh "ssh -o StrictHostKeyChecking=no ec2-user@${ipAddress} ${dockerCMD}"
     }
-    
-    stage('pull docker image'){
-        def dockerCMD = 'sudo docker pull shubhamkushwah123/cicd-demo:3.0'
-        sshagent(['aws-dev-server']) {
-        sh "ssh -o StrictHostKeyChecking=no ec2-user@${ipAddress} ${dockerCMD}"
-        }
+  }
+
+  stage('Run Docker Daemon') {
+    def dockerCMD = 'sudo service docker start'
+    sshagent(['aws-server']) {
+       sh "ssh -o StrictHostKeyChecking=no ec2-user@${ipAddress} ${dockerCMD}"
     }
-    
-    stage('run docker image'){
-        def dockerCMD = 'sudo docker run -p 80:8082 -d shubhamkushwah123/cicd-demo:3.0'
-        sshagent(['aws-dev-server']) {
-        sh "ssh -o StrictHostKeyChecking=no ec2-user@${ipAddress} ${dockerCMD}"
-        }
+  }
+
+  stage('pull docker image') {
+    def dockerCMD = "sudo docker pull ${imageName}"
+    sshagent(['aws-server']) {
+      sh "ssh -o StrictHostKeyChecking=no ec2-user@${ipAddress} ${dockerCMD}"
+
     }
+  }
+
+  stage('run docker image') {
+    def dockerCMD = "sudo docker run -p 8090:8090 -d ${imageName}"
+    sshagent(['aws-server']) {
+        sh "ssh -o StrictHostKeyChecking=no ec2-user@${ipAddress} ${dockerCMD}"
+
+    }
+  }
+
 }
